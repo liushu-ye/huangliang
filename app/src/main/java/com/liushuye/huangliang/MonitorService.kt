@@ -27,9 +27,17 @@ class MonitorService : Service() {
     /** 本次使用会话的开始时间，0 表示还没有开始计时 */
     private var sessionStart = 0L
 
-    /** 下一次该提醒的时间戳；Long.MAX_VALUE 表示本轮已经提醒过 */
+    /** 本次会话按多少分钟计；用户中途改提醒时间会跟着变 */
     @Volatile
-    private var nextReminderAt = 0L
+    private var sessionMinutes = 0
+
+    /** 本轮会话是否已经提醒过 */
+    @Volatile
+    private var remindedThisSession = false
+
+    /** 「再玩 N 分钟」的顺延截止点，0 表示没有顺延 */
+    @Volatile
+    private var snoozeUntil = 0L
 
     /** 用户点了「好，我退出」但还没真的走，记下来待会追问 */
     @Volatile
@@ -96,8 +104,7 @@ class MonitorService : Service() {
         // 前台换人了：结束上一轮会话
         if (foreground != currentPackage) {
             currentPackage = foreground
-            sessionStart = 0L
-            nextReminderAt = 0L
+            resetSession()
             overlay.dismiss()
         }
 
@@ -105,22 +112,43 @@ class MonitorService : Service() {
 
         val target = foreground?.let { pkg -> monitored.firstOrNull { it.packageName == pkg } }
         if (target == null) {
-            sessionStart = 0L
-            nextReminderAt = 0L
+            resetSession()
             return
         }
 
         // 刚进入目标 App，本次会话从这一刻开始重新计时
         if (sessionStart == 0L) {
             sessionStart = now
-            nextReminderAt = now + target.minutes * 60_000L
+            sessionMinutes = target.minutes
+            remindedThisSession = false
+            snoozeUntil = 0L
             return
         }
 
-        if (now >= nextReminderAt) {
-            nextReminderAt = Long.MAX_VALUE
+        // 用户中途把提醒时间改掉了：按新的时长重算，不用等下一次会话
+        if (target.minutes != sessionMinutes) {
+            sessionMinutes = target.minutes
+            if (remindedThisSession) {
+                // 已经提醒过又改时长，当成新一轮，从现在重新计时
+                sessionStart = now
+                remindedThisSession = false
+                snoozeUntil = 0L
+            }
+        }
+
+        // 取「按设定时长到期」和「用户点了再玩 N 分钟」里更晚的那个
+        val dueAt = maxOf(sessionStart + sessionMinutes * 60_000L, snoozeUntil)
+        if (!remindedThisSession && now >= dueAt) {
+            remindedThisSession = true
             remind(target)
         }
+    }
+
+    private fun resetSession() {
+        sessionStart = 0L
+        sessionMinutes = 0
+        remindedThisSession = false
+        snoozeUntil = 0L
     }
 
     /**
@@ -141,7 +169,7 @@ class MonitorService : Service() {
                 label = pending.label,
                 onSnooze = { minutes ->
                     clearPendingExit()
-                    nextReminderAt = System.currentTimeMillis() + minutes * 60_000L
+                    snooze(minutes)
                 },
                 onLeave = { requestExit(pending) }
             )
@@ -184,11 +212,15 @@ class MonitorService : Service() {
         overlay.showReminder(
             label = target.label,
             minutes = target.minutes,
-            onSnooze = { minutes ->
-                nextReminderAt = System.currentTimeMillis() + minutes * 60_000L
-            },
+            onSnooze = { minutes -> snooze(minutes) },
             onLeave = { requestExit(target) }
         )
+    }
+
+    /** 「再玩 N 分钟」：把截止点往后推，并允许再次提醒 */
+    private fun snooze(minutes: Int) {
+        snoozeUntil = System.currentTimeMillis() + minutes * 60_000L
+        remindedThisSession = false
     }
 
     /**

@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -186,6 +187,7 @@ class MainActivity : ComponentActivity() {
         var selected by remember { mutableStateOf(loadSelected()) }
         var showPicker by remember { mutableStateOf(false) }
         var showFeedback by remember { mutableStateOf(false) }
+        var editing by remember { mutableStateOf<MonitoredApp?>(null) }
 
         // 标语每次打开 App 随机一句，同一次使用内保持不变
         val slogan = remember { Slogans.random() }
@@ -307,13 +309,16 @@ class MainActivity : ComponentActivity() {
                         Card(Modifier.fillMaxWidth()) {
                             Row(
                                 Modifier
-                                    .padding(16.dp)
+                                    .padding(start = 16.dp, top = 8.dp, end = 8.dp, bottom = 8.dp)
                                     .fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
+                                Column(Modifier.weight(1f)) {
                                     Text(app.label, style = MaterialTheme.typography.titleMedium)
                                     Text("每次打开 ${app.minutes} 分钟后提醒")
+                                }
+                                TextButton(onClick = { editing = app }) {
+                                    Text("编辑")
                                 }
                                 TextButton(onClick = {
                                     selected = selected.filterNot { it.packageName == app.packageName }
@@ -350,7 +355,57 @@ class MainActivity : ComponentActivity() {
                     onOpenQq = { openQqGroup() }
                 )
             }
+
+            editing?.let { app ->
+                EditMinutesDialog(
+                    app = app,
+                    onDismiss = { editing = null },
+                    onSave = { newMinutes ->
+                        selected = selected.map {
+                            if (it.packageName == app.packageName) it.copy(minutes = newMinutes) else it
+                        }
+                        saveSelected(selected)
+                        editing = null
+                    }
+                )
+            }
         }
+    }
+
+    @Composable
+    private fun EditMinutesDialog(
+        app: MonitoredApp,
+        onDismiss: () -> Unit,
+        onSave: (Int) -> Unit
+    ) {
+        var minutes by remember { mutableStateOf(app.minutes) }
+
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(app.label) },
+            text = {
+                Column {
+                    Text("每次打开后提醒时间：$minutes 分钟")
+                    Slider(
+                        value = minutes.toFloat(),
+                        onValueChange = { minutes = it.toInt().coerceIn(1, 120) },
+                        valueRange = 1f..120f,
+                        steps = 118
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "改完立刻生效：如果正在用这个 App，本轮会按新的时长重算。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onSave(minutes) }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        )
     }
 
     @Composable
@@ -429,7 +484,8 @@ class MainActivity : ComponentActivity() {
                     Slider(
                         value = minutes.toFloat(),
                         onValueChange = { minutes = it.toInt().coerceIn(1, 120) },
-                        valueRange = 1f..120f
+                        valueRange = 1f..120f,
+                        steps = 118
                     )
 
                     Spacer(Modifier.height(8.dp))
