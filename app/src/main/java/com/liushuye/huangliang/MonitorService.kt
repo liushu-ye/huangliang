@@ -1,4 +1,4 @@
-package com.example.appbreak
+package com.liushuye.huangliang
 
 import android.Manifest
 import android.app.*
@@ -30,6 +30,14 @@ class MonitorService : Service() {
     /** 下一次该提醒的时间戳；Long.MAX_VALUE 表示本轮已经提醒过 */
     @Volatile
     private var nextReminderAt = 0L
+
+    /** 用户点了「好，我退出」但还没真的走，记下来待会追问 */
+    @Volatile
+    private var pendingExit: MonitoredApp? = null
+
+    /** 追问他「怎么还没退出」的时间点 */
+    @Volatile
+    private var nagAt = 0L
 
     /** 上一次查询使用事件的时间点，用它来推进查询窗口，避免漏事件 */
     private var lastEventQuery = 0L
@@ -93,6 +101,8 @@ class MonitorService : Service() {
             overlay.dismiss()
         }
 
+        checkPendingExit(now, foreground)
+
         val target = foreground?.let { pkg -> monitored.firstOrNull { it.packageName == pkg } }
         if (target == null) {
             sessionStart = 0L
@@ -110,6 +120,31 @@ class MonitorService : Service() {
         if (now >= nextReminderAt) {
             nextReminderAt = Long.MAX_VALUE
             remind(target)
+        }
+    }
+
+    /**
+     * 「好，我退出」之后的跟进：
+     * 人走了就收工；还在原地待着就到点追问一句「你怎么还没退出」。
+     */
+    private fun checkPendingExit(now: Long, foreground: String?) {
+        val pending = pendingExit ?: return
+
+        if (foreground != pending.packageName) {
+            clearPendingExit()
+            return
+        }
+
+        if (now >= nagAt) {
+            nagAt = now + NAG_REPEAT_MS
+            overlay.showNag(
+                label = pending.label,
+                onSnooze = { minutes ->
+                    clearPendingExit()
+                    nextReminderAt = System.currentTimeMillis() + minutes * 60_000L
+                },
+                onLeave = { requestExit(pending) }
+            )
         }
     }
 
@@ -146,9 +181,32 @@ class MonitorService : Service() {
     private fun remind(target: MonitoredApp) {
         sendNotification(target)
         // 没给悬浮窗权限时 canDraw() 为 false，show() 自己会跳过，只留通知
-        overlay.show(target.label, target.minutes) { snoozeMinutes ->
-            nextReminderAt = System.currentTimeMillis() + snoozeMinutes * 60_000L
-        }
+        overlay.showReminder(
+            label = target.label,
+            minutes = target.minutes,
+            onSnooze = { minutes ->
+                nextReminderAt = System.currentTimeMillis() + minutes * 60_000L
+            },
+            onLeave = { requestExit(target) }
+        )
+    }
+
+    /**
+     * 用户表达「我要退出」。
+     *
+     * Android 没有「关掉别的 App」的公开 API，能做到的是通过无障碍服务把用户送回桌面。
+     * 服务没开也不强求 —— 会把这次退出挂起，NAG_DELAY_MS 之后如果目标 App 还在前台，
+     * 就弹「你怎么还没退出」继续催。
+     */
+    private fun requestExit(target: MonitoredApp) {
+        pendingExit = target
+        nagAt = System.currentTimeMillis() + NAG_DELAY_MS
+        ExitHelper.goHome()
+    }
+
+    private fun clearPendingExit() {
+        pendingExit = null
+        nagAt = 0L
     }
 
     private fun sendNotification(target: MonitoredApp) {
@@ -235,5 +293,11 @@ class MonitorService : Service() {
 
         /** 首次查询的回看窗口：服务可能是用户已经打开目标 App 之后才启动的 */
         private const val FIRST_LOOKBACK_MS = 10 * 60_000L
+
+        /** 点了「好，我退出」之后多久开始追问 */
+        private const val NAG_DELAY_MS = 20_000L
+
+        /** 追问的间隔 */
+        private const val NAG_REPEAT_MS = 45_000L
     }
 }

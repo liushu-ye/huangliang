@@ -1,9 +1,11 @@
-package com.example.appbreak
+package com.liushuye.huangliang
 
 import android.Manifest
 import android.app.AppOpsManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -22,10 +25,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.text.Collator
 import java.util.Locale
+
+/** 反馈 QQ 群 */
+private const val QQ_GROUP = "535391647"
 
 data class MonitoredApp(
     val label: String,
@@ -83,18 +90,19 @@ class MainActivity : ComponentActivity() {
 
     private val usageGranted = mutableStateOf(false)
     private val overlayGranted = mutableStateOf(false)
+    private val accessibilityGranted = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannels()
-        usageGranted.value = hasUsagePermission()
-        overlayGranted.value = canDrawOverlays()
+        refreshPermissions()
 
         setContent {
             MaterialTheme {
                 AppScreen(
                     permission = usageGranted.value,
-                    overlay = overlayGranted.value
+                    overlay = overlayGranted.value,
+                    accessibility = accessibilityGranted.value
                 )
             }
         }
@@ -102,20 +110,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 用户可能刚从系统设置页返回，两个权限都重新检查一次
-        usageGranted.value = hasUsagePermission()
-        overlayGranted.value = canDrawOverlays()
+        // 用户可能刚从系统设置页返回，几个权限都重新检查一次
+        refreshPermissions()
     }
 
-    private fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(this)
-
-    private fun requestOverlayPermission() {
-        startActivity(
-            Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-        )
+    private fun refreshPermissions() {
+        usageGranted.value = hasUsagePermission()
+        overlayGranted.value = Settings.canDrawOverlays(this)
+        accessibilityGranted.value = ExitHelper.isEnabled(this)
     }
 
     private fun hasUsagePermission(): Boolean {
@@ -138,12 +140,52 @@ class MainActivity : ComponentActivity() {
         return mode == AppOpsManager.MODE_ALLOWED
     }
 
+    private fun openUsageAccessSettings() {
+        startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+    }
+
+    private fun openOverlaySettings() {
+        startActivity(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+        )
+    }
+
+    private fun openAccessibilitySettings() {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    /** 复制群号，Android 13+ 系统自己会弹提示，就不用我们再弹一次 */
+    private fun copyGroupNumber() {
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("QQ群", QQ_GROUP))
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Toast.makeText(this, "群号已复制：$QQ_GROUP", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 试着直接拉起 QQ 的群名片，没装 QQ 就提示手动搜索 */
+    private fun openQqGroup() {
+        val uri = Uri.parse(
+            "mqqapi://card/show_pslcard?src_type=internal&version=1" +
+                "&uin=$QQ_GROUP&card_type=group&source=qrcode"
+        )
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        } catch (e: Exception) {
+            Toast.makeText(this, "没找到 QQ，请手动搜索群号 $QQ_GROUP", Toast.LENGTH_LONG).show()
+        }
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    private fun AppScreen(permission: Boolean, overlay: Boolean) {
+    private fun AppScreen(permission: Boolean, overlay: Boolean, accessibility: Boolean) {
         var allApps by remember { mutableStateOf(loadApps()) }
         var selected by remember { mutableStateOf(loadSelected()) }
         var showPicker by remember { mutableStateOf(false) }
+        var showFeedback by remember { mutableStateOf(false) }
 
         val context = LocalContext.current
         val notificationPermission = rememberLauncherForActivityResult(
@@ -173,112 +215,179 @@ class MainActivity : ComponentActivity() {
 
         Scaffold(
             topBar = {
-                TopAppBar(title = { Text("黄粱一梦") })
-            }
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .padding(padding)
-                    .padding(16.dp)
-                    .fillMaxSize()
-            ) {
-                Text(
-                    "不是统计你今天用了多久，而是在每一次沉浸时提醒你。",
-                    style = MaterialTheme.typography.bodyLarge
-                )
-
-                Spacer(Modifier.height(16.dp))
-
-                if (!permission) {
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text("① 需要使用情况访问权限")
-                            Spacer(Modifier.height(8.dp))
-                            Text("系统需要知道当前前台正在运行哪个 App，才能判断一次使用从什么时候开始。")
-                            Spacer(Modifier.height(12.dp))
-                            Button(onClick = {
-                                startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                            }) {
-                                Text("打开权限设置")
-                            }
+                TopAppBar(
+                    title = { Text("黄粱一梦") },
+                    actions = {
+                        IconButton(onClick = { showFeedback = true }) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_feedback),
+                                contentDescription = "反馈"
+                            )
                         }
                     }
-                    Spacer(Modifier.height(12.dp))
+                )
+            }
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Text(
+                        "不是统计你今天用了多久，而是在每一次沉浸时提醒你。",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+
+                if (!permission) {
+                    item {
+                        PermissionCard(
+                            title = "① 需要使用情况访问权限",
+                            body = "系统需要知道当前前台正在运行哪个 App，才能判断一次使用从什么时候开始。",
+                            actionLabel = "打开权限设置",
+                            onAction = { openUsageAccessSettings() }
+                        )
+                    }
                 }
 
                 if (!overlay) {
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text("② 建议开启悬浮窗权限")
-                            Spacer(Modifier.height(8.dp))
-                            Text("时间到了会直接弹一个大提醒框盖在屏幕上，比通知难忽略得多。不开启也能用，只有通知。")
-                            Spacer(Modifier.height(12.dp))
-                            Button(onClick = { requestOverlayPermission() }) {
-                                Text("打开悬浮窗设置")
-                            }
-                        }
+                    item {
+                        PermissionCard(
+                            title = "② 建议开启悬浮窗权限",
+                            body = "时间到了会直接弹一个大提醒框盖在屏幕上，比通知难忽略得多。不开启也能用，只有通知。",
+                            actionLabel = "打开悬浮窗设置",
+                            onAction = { openOverlaySettings() }
+                        )
                     }
-                    Spacer(Modifier.height(12.dp))
                 }
 
-                Button(
-                    onClick = {
-                        allApps = loadApps()
-                        showPicker = true
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("添加要监控的 App")
+                if (!accessibility) {
+                    item {
+                        PermissionCard(
+                            title = "③ 可选：无障碍权限",
+                            body = "开启后点「好，我退出」会直接把你送回桌面。不开启也能用，" +
+                                "只是得自己手动退 —— 我们会在一段时间后追问你「怎么还没退出」。",
+                            actionLabel = "打开无障碍设置",
+                            onAction = { openAccessibilitySettings() }
+                        )
+                    }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                item {
+                    Button(
+                        onClick = {
+                            allApps = loadApps()
+                            showPicker = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("添加要监控的 App")
+                    }
+                }
 
                 if (selected.isEmpty()) {
-                    Text("还没有监控任何 App")
-                    Spacer(Modifier.weight(1f))
+                    item { Text("还没有监控任何 App") }
                 } else {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(selected) { app ->
-                            Card(Modifier.fillMaxWidth()) {
-                                Row(
-                                    Modifier
-                                        .padding(16.dp)
-                                        .fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column {
-                                        Text(app.label, style = MaterialTheme.typography.titleMedium)
-                                        Text("每次打开 ${app.minutes} 分钟后提醒")
-                                    }
-                                    TextButton(onClick = {
-                                        selected = selected.filterNot { it.packageName == app.packageName }
-                                        saveSelected(selected)
-                                    }) {
-                                        Text("删除")
-                                    }
+                    items(selected, key = { it.packageName }) { app ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Row(
+                                Modifier
+                                    .padding(16.dp)
+                                    .fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
+                                    Text(app.label, style = MaterialTheme.typography.titleMedium)
+                                    Text("每次打开 ${app.minutes} 分钟后提醒")
+                                }
+                                TextButton(onClick = {
+                                    selected = selected.filterNot { it.packageName == app.packageName }
+                                    saveSelected(selected)
+                                }) {
+                                    Text("删除")
                                 }
                             }
                         }
                     }
                 }
+            }
 
-                if (showPicker) {
-                    AppPicker(
-                        allApps = allApps,
-                        onDismiss = { showPicker = false },
-                        onAdd = { label, pkg, minutes ->
-                            val item = MonitoredApp(label, pkg, minutes)
-                            selected = (selected.filterNot { it.packageName == item.packageName } + item)
-                            saveSelected(selected)
-                            showPicker = false
-                        }
-                    )
-                }
+            if (showPicker) {
+                AppPicker(
+                    allApps = allApps,
+                    onDismiss = { showPicker = false },
+                    onAdd = { label, pkg, minutes ->
+                        val item = MonitoredApp(label, pkg, minutes)
+                        selected = (selected.filterNot { it.packageName == item.packageName } + item)
+                        saveSelected(selected)
+                        showPicker = false
+                    }
+                )
+            }
+
+            if (showFeedback) {
+                FeedbackDialog(
+                    onDismiss = { showFeedback = false },
+                    onCopy = {
+                        copyGroupNumber()
+                        showFeedback = false
+                    },
+                    onOpenQq = { openQqGroup() }
+                )
             }
         }
+    }
+
+    @Composable
+    private fun PermissionCard(
+        title: String,
+        body: String,
+        actionLabel: String,
+        onAction: () -> Unit
+    ) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(8.dp))
+                Text(body, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onAction) { Text(actionLabel) }
+            }
+        }
+    }
+
+    @Composable
+    private fun FeedbackDialog(
+        onDismiss: () -> Unit,
+        onCopy: () -> Unit,
+        onOpenQq: () -> Unit
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            icon = {
+                Icon(
+                    painter = painterResource(R.drawable.ic_feedback),
+                    contentDescription = null
+                )
+            },
+            title = { Text("反馈 / 许愿") },
+            text = {
+                Column {
+                    Text("想要的功能、遇到的问题、觉得哪里可以做得更好，都欢迎来说一声。")
+                    Spacer(Modifier.height(12.dp))
+                    Text("QQ 搜索 $QQ_GROUP 加入群聊", style = MaterialTheme.typography.titleMedium)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onCopy) { Text("复制群号") }
+            },
+            dismissButton = {
+                TextButton(onClick = onOpenQq) { Text("打开 QQ") }
+            }
+        )
     }
 
     @Composable

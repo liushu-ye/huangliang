@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.appbreak"
+    namespace = "com.liushuye.huangliang"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.appbreak"
+        applicationId = "com.liushuye.huangliang"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     compileOptions {
