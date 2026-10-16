@@ -1,3 +1,4 @@
 <resources>
-    <color name="ic_launcher_background">#FF1565C0</color>
+    <!-- 图标底：源图是白底黑字，这里保持一致 -->
+    <color name="ic_launcher_background">#FFFFFFFF</color>
 </resources>

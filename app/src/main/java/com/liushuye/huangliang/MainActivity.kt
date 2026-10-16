@@ -187,6 +187,9 @@ class MainActivity : ComponentActivity() {
         var showPicker by remember { mutableStateOf(false) }
         var showFeedback by remember { mutableStateOf(false) }
 
+        // 标语每次打开 App 随机一句，同一次使用内保持不变
+        val slogan = remember { Slogans.random() }
+
         val context = LocalContext.current
         val notificationPermission = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -236,10 +239,19 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
-                    Text(
-                        "不是统计你今天用了多久，而是在每一次沉浸时提醒你。",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
+                    Column {
+                        // 每次打开换一句，点进去之前先看一眼
+                        Text(
+                            slogan,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "不是统计你今天用了多久，而是在每一次沉浸时提醒你。",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
                 }
 
                 if (!permission) {

@@ -45,6 +45,7 @@ class ReminderOverlay(private val context: Context) {
     ) = showCard(
         title = "该休息一下了",
         body = "「$label」已经连续用了 $minutes 分钟。",
+        slogan = Slogans.random(),
         snoozeLabel = "再玩 5 分钟",
         leaveLabel = "好，我退出",
         cardColor = BACKGROUND_REMINDER,
@@ -62,6 +63,7 @@ class ReminderOverlay(private val context: Context) {
     ) = showCard(
         title = "你怎么还没退出",
         body = "「$label」还在前台开着呢。",
+        slogan = Slogans.random(),
         snoozeLabel = "再玩 5 分钟",
         leaveLabel = "这就退",
         cardColor = BACKGROUND_NAG,
@@ -76,6 +78,7 @@ class ReminderOverlay(private val context: Context) {
     private fun showCard(
         title: String,
         body: String,
+        slogan: String,
         snoozeLabel: String,
         leaveLabel: String,
         cardColor: String,
@@ -86,7 +89,9 @@ class ReminderOverlay(private val context: Context) {
         // WindowManager 只能在主线程操作
         handler.post {
             removeCurrent()
-            val view = build(title, body, snoozeLabel, leaveLabel, cardColor, onSnooze, onLeave)
+            val view = build(
+                title, body, slogan, snoozeLabel, leaveLabel, cardColor, onSnooze, onLeave
+            )
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -121,6 +126,7 @@ class ReminderOverlay(private val context: Context) {
     private fun build(
         title: String,
         body: String,
+        slogan: String,
         snoozeLabel: String,
         leaveLabel: String,
         cardColor: String,
@@ -147,7 +153,15 @@ class ReminderOverlay(private val context: Context) {
             text = body
             textSize = 15f
             setTextColor(Color.parseColor("#FF44504A"))
-            setPadding(0, dp(10), 0, dp(16))
+            setPadding(0, dp(10), 0, dp(6))
+        }
+
+        // 小字标语，语气比正文轻，夹在正文和按钮之间
+        val sloganView = TextView(context).apply {
+            text = slogan
+            textSize = 13f
+            setTextColor(Color.parseColor("#FF8A8F8C"))
+            setPadding(0, 0, 0, dp(16))
         }
 
         val row = LinearLayout(context).apply {
@@ -181,6 +195,7 @@ class ReminderOverlay(private val context: Context) {
 
         card.addView(titleView)
         card.addView(bodyView)
+        card.addView(sloganView)
         card.addView(row)
 
         return FrameLayout(context).apply {
