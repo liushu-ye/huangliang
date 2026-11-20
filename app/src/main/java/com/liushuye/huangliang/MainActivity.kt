@@ -18,6 +18,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,68 +31,73 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.text.Collator
+import java.time.LocalDate
 import java.util.Locale
 
 /** 反馈 QQ 群 */
 private const val QQ_GROUP = "535391647"
 
-data class MonitoredApp(
-    val label: String,
-    val packageName: String,
-    val minutes: Int
+/** 常见娱乐 App，带上默认分类，省得用户自己一个个选 */
+private data class CommonApp(val label: String, val pkg: String, val category: AppCategory)
+
+private val COMMON_APPS = listOf(
+    CommonApp("哔哩哔哩", "tv.danmaku.bili", AppCategory.SHORT_VIDEO),
+    CommonApp("哔哩哔哩国际版", "com.bilibili.app.in", AppCategory.SHORT_VIDEO),
+    CommonApp("抖音", "com.ss.android.ugc.aweme", AppCategory.SHORT_VIDEO),
+    CommonApp("抖音极速版", "com.ss.android.ugc.aweme.lite", AppCategory.SHORT_VIDEO),
+    CommonApp("快手", "com.smile.gifmaker", AppCategory.SHORT_VIDEO),
+    CommonApp("快手极速版", "com.kuaishou.nebula", AppCategory.SHORT_VIDEO),
+    CommonApp("腾讯视频", "com.tencent.qqlive", AppCategory.SHORT_VIDEO),
+    CommonApp("爱奇艺", "com.qiyi.video", AppCategory.SHORT_VIDEO),
+    CommonApp("优酷", "com.youku.phone", AppCategory.SHORT_VIDEO),
+    CommonApp("芒果TV", "com.hunantv.imgo.activity", AppCategory.SHORT_VIDEO),
+    CommonApp("西瓜视频", "com.ss.android.article.video", AppCategory.SHORT_VIDEO),
+    CommonApp("番茄小说", "com.dragon.read", AppCategory.READING),
+    CommonApp("七猫免费小说", "com.kmxs.reader", AppCategory.READING),
+    CommonApp("微信读书", "com.tencent.weread", AppCategory.READING),
+    CommonApp("起点读书", "com.qidian.QDReader", AppCategory.READING),
+    CommonApp("晋江小说阅读", "com.jjwxc.reader", AppCategory.READING),
+    CommonApp("掌阅", "com.zhangyue.read", AppCategory.READING),
+    CommonApp("今日头条", "com.ss.android.article.news", AppCategory.READING),
+    CommonApp("知乎", "com.zhihu.android", AppCategory.READING),
+    CommonApp("小红书", "com.xingin.xhs", AppCategory.SOCIAL),
+    CommonApp("微博", "com.sina.weibo", AppCategory.SOCIAL),
+    CommonApp("百度贴吧", "com.baidu.tieba", AppCategory.SOCIAL),
+    CommonApp("王者荣耀", "com.tencent.tmgp.sgame", AppCategory.GAME),
+    CommonApp("和平精英", "com.tencent.tmgp.pubgmhd", AppCategory.GAME),
+    CommonApp("原神", "com.miHoYo.Yuanshen", AppCategory.GAME),
+    CommonApp("崩坏：星穹铁道", "com.miHoYo.hkrpg", AppCategory.GAME),
+    CommonApp("蛋仔派对", "com.netease.party", AppCategory.GAME),
+    CommonApp("第五人格", "com.netease.dwrg", AppCategory.GAME),
+    CommonApp("网易云音乐", "com.netease.cloudmusic", AppCategory.OTHER),
+    CommonApp("QQ音乐", "com.tencent.qqmusic", AppCategory.OTHER),
+    CommonApp("汽水音乐", "com.luna.music", AppCategory.OTHER),
+    CommonApp("淘宝", "com.taobao.taobao", AppCategory.OTHER),
+    CommonApp("拼多多", "com.xunmeng.pinduoduo", AppCategory.OTHER),
+    CommonApp("京东", "com.jingdong.app.mall", AppCategory.OTHER),
+    CommonApp("闲鱼", "com.taobao.idlefish", AppCategory.OTHER)
 )
 
-/**
- * 常见娱乐 App 的包名。装在手机上的会出现在选择器的「常用」列表里，
- * 省得在几百个应用里翻。
- */
-private val COMMON_APPS = listOf(
-    "哔哩哔哩" to "tv.danmaku.bili",
-    "哔哩哔哩国际版" to "com.bilibili.app.in",
-    "抖音" to "com.ss.android.ugc.aweme",
-    "抖音极速版" to "com.ss.android.ugc.aweme.lite",
-    "快手" to "com.smile.gifmaker",
-    "快手极速版" to "com.kuaishou.nebula",
-    "小红书" to "com.xingin.xhs",
-    "微博" to "com.sina.weibo",
-    "番茄小说" to "com.dragon.read",
-    "七猫免费小说" to "com.kmxs.reader",
-    "微信读书" to "com.tencent.weread",
-    "起点读书" to "com.qidian.QDReader",
-    "晋江小说阅读" to "com.jjwxc.reader",
-    "掌阅" to "com.zhangyue.read",
-    "腾讯视频" to "com.tencent.qqlive",
-    "爱奇艺" to "com.qiyi.video",
-    "优酷" to "com.youku.phone",
-    "芒果TV" to "com.hunantv.imgo.activity",
-    "西瓜视频" to "com.ss.android.article.video",
-    "今日头条" to "com.ss.android.article.news",
-    "网易云音乐" to "com.netease.cloudmusic",
-    "QQ音乐" to "com.tencent.qqmusic",
-    "汽水音乐" to "com.luna.music",
-    "王者荣耀" to "com.tencent.tmgp.sgame",
-    "和平精英" to "com.tencent.tmgp.pubgmhd",
-    "原神" to "com.miHoYo.Yuanshen",
-    "崩坏：星穹铁道" to "com.miHoYo.hkrpg",
-    "蛋仔派对" to "com.netease.party",
-    "第五人格" to "com.netease.dwrg",
-    "知乎" to "com.zhihu.android",
-    "百度贴吧" to "com.baidu.tieba",
-    "淘宝" to "com.taobao.taobao",
-    "拼多多" to "com.xunmeng.pinduoduo",
-    "京东" to "com.jingdong.app.mall",
-    "闲鱼" to "com.taobao.idlefish"
+private val COMMON_CATEGORY: Map<String, AppCategory> =
+    COMMON_APPS.associate { it.pkg to it.category }
+
+/** 正在添加或编辑的目标 */
+private data class ConfigTarget(
+    val label: String,
+    val packageName: String,
+    val minutes: Int,
+    val category: AppCategory,
+    val isNew: Boolean
 )
 
 class MainActivity : ComponentActivity() {
 
-    private val prefs by lazy {
-        getSharedPreferences("settings", Context.MODE_PRIVATE)
-    }
-
     private val usageGranted = mutableStateOf(false)
     private val overlayGranted = mutableStateOf(false)
     private val accessibilityGranted = mutableStateOf(false)
+
+    /** 每次回前台加一，用来触发界面重新读统计数据 */
+    private val refreshTick = mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,10 +106,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                AppScreen(
+                AppRoot(
                     permission = usageGranted.value,
                     overlay = overlayGranted.value,
-                    accessibility = accessibilityGranted.value
+                    accessibility = accessibilityGranted.value,
+                    refreshKey = refreshTick.value
                 )
             }
         }
@@ -111,8 +118,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 用户可能刚从系统设置页返回，几个权限都重新检查一次
         refreshPermissions()
+        refreshTick.value++
     }
 
     private fun refreshPermissions() {
@@ -180,19 +187,53 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Composable
+    private fun AppRoot(
+        permission: Boolean,
+        overlay: Boolean,
+        accessibility: Boolean,
+        refreshKey: Int
+    ) {
+        var showHistory by remember { mutableStateOf(false) }
+
+        if (showHistory) {
+            HistoryScreen(onBack = { showHistory = false })
+        } else {
+            HomeScreen(
+                permission = permission,
+                overlay = overlay,
+                accessibility = accessibility,
+                refreshKey = refreshKey,
+                onOpenHistory = { showHistory = true }
+            )
+        }
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    private fun AppScreen(permission: Boolean, overlay: Boolean, accessibility: Boolean) {
+    private fun HomeScreen(
+        permission: Boolean,
+        overlay: Boolean,
+        accessibility: Boolean,
+        refreshKey: Int,
+        onOpenHistory: () -> Unit
+    ) {
+        val context = LocalContext.current
+        var monitored by remember(refreshKey) { mutableStateOf(AppStore.loadMonitored(context)) }
+        var reference by remember(refreshKey) { mutableStateOf(AppStore.loadReference(context)) }
+        var todayRecord by remember(refreshKey) {
+            mutableStateOf(AppStore.recordFor(context, LocalDate.now()))
+        }
+
         var allApps by remember { mutableStateOf(loadApps()) }
-        var selected by remember { mutableStateOf(loadSelected()) }
         var showPicker by remember { mutableStateOf(false) }
         var showFeedback by remember { mutableStateOf(false) }
-        var editing by remember { mutableStateOf<MonitoredApp?>(null) }
+        var showReferenceDialog by remember { mutableStateOf(false) }
+        var configuring by remember { mutableStateOf<ConfigTarget?>(null) }
 
         // 标语每次打开 App 随机一句，同一次使用内保持不变
         val slogan = remember { Slogans.random() }
 
-        val context = LocalContext.current
         val notificationPermission = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { }
@@ -209,20 +250,32 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        LaunchedEffect(permission, selected) {
+        LaunchedEffect(permission, monitored) {
             val serviceIntent = Intent(this@MainActivity, MonitorService::class.java)
-            if (permission && selected.isNotEmpty()) {
+            if (permission && monitored.isNotEmpty()) {
                 ContextCompat.startForegroundService(this@MainActivity, serviceIntent)
             } else {
                 stopService(serviceIntent)
             }
         }
 
+        val today = LocalDate.now()
+        val referenceMinutes = reference.minutesFor(today)
+        val usedMinutes = todayRecord?.usedMinutes ?: 0
+        val snoozeCount = todayRecord?.snoozeCount ?: 0
+        val percent = if (referenceMinutes > 0) usedMinutes * 100 / referenceMinutes else 0
+
         Scaffold(
             topBar = {
                 TopAppBar(
                     title = { Text("黄粱一梦") },
                     actions = {
+                        IconButton(onClick = onOpenHistory) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_history),
+                                contentDescription = "历史记录"
+                            )
+                        }
                         IconButton(onClick = { showFeedback = true }) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_feedback),
@@ -241,19 +294,21 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
-                    Column {
-                        // 每次打开换一句，点进去之前先看一眼
-                        Text(
-                            slogan,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "不是统计你今天用了多久，而是在每一次沉浸时提醒你。",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    }
+                    Text(
+                        slogan,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                item {
+                    TodayCard(
+                        usedMinutes = usedMinutes,
+                        referenceMinutes = referenceMinutes,
+                        percent = percent,
+                        snoozeCount = snoozeCount,
+                        onEditReference = { showReferenceDialog = true }
+                    )
                 }
 
                 if (!permission) {
@@ -302,32 +357,26 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                if (selected.isEmpty()) {
+                if (monitored.isEmpty()) {
                     item { Text("还没有监控任何 App") }
                 } else {
-                    items(selected, key = { it.packageName }) { app ->
-                        Card(Modifier.fillMaxWidth()) {
-                            Row(
-                                Modifier
-                                    .padding(start = 16.dp, top = 8.dp, end = 8.dp, bottom = 8.dp)
-                                    .fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(app.label, style = MaterialTheme.typography.titleMedium)
-                                    Text("每次打开 ${app.minutes} 分钟后提醒")
-                                }
-                                TextButton(onClick = { editing = app }) {
-                                    Text("编辑")
-                                }
-                                TextButton(onClick = {
-                                    selected = selected.filterNot { it.packageName == app.packageName }
-                                    saveSelected(selected)
-                                }) {
-                                    Text("删除")
-                                }
+                    items(monitored, key = { it.packageName }) { app ->
+                        MonitoredRow(
+                            app = app,
+                            onEdit = {
+                                configuring = ConfigTarget(
+                                    label = app.label,
+                                    packageName = app.packageName,
+                                    minutes = app.minutes,
+                                    category = app.category,
+                                    isNew = false
+                                )
+                            },
+                            onDelete = {
+                                monitored = monitored.filterNot { it.packageName == app.packageName }
+                                AppStore.saveMonitored(context, monitored)
                             }
-                        }
+                        )
                     }
                 }
             }
@@ -336,11 +385,51 @@ class MainActivity : ComponentActivity() {
                 AppPicker(
                     allApps = allApps,
                     onDismiss = { showPicker = false },
-                    onAdd = { label, pkg, minutes ->
-                        val item = MonitoredApp(label, pkg, minutes)
-                        selected = (selected.filterNot { it.packageName == item.packageName } + item)
-                        saveSelected(selected)
+                    onPick = { label, pkg ->
                         showPicker = false
+                        configuring = ConfigTarget(
+                            label = label,
+                            packageName = pkg,
+                            minutes = 15,
+                            category = COMMON_CATEGORY[pkg] ?: AppCategory.OTHER,
+                            isNew = true
+                        )
+                    }
+                )
+            }
+
+            configuring?.let { target ->
+                AppConfigDialog(
+                    target = target,
+                    onDismiss = { configuring = null },
+                    onSave = { minutes, category ->
+                        val item = MonitoredApp(
+                            label = target.label,
+                            packageName = target.packageName,
+                            minutes = minutes,
+                            category = category
+                        )
+                        monitored = monitored
+                            .filterNot { it.packageName == item.packageName }
+                            .plus(item)
+                            .sortedBy { it.label }
+                        AppStore.saveMonitored(context, monitored)
+                        configuring = null
+                    }
+                )
+            }
+
+            if (showReferenceDialog) {
+                ReferenceDialog(
+                    current = reference,
+                    onDismiss = { showReferenceDialog = false },
+                    onSave = { updated ->
+                        reference = updated
+                        AppStore.saveReference(context, updated)
+                        // 今天的记录快照也跟着改，日历里今天的占比才不会还是旧值
+                        AppStore.refreshTodayReference(context)
+                        showReferenceDialog = false
+                        todayRecord = AppStore.recordFor(context, LocalDate.now())
                     }
                 )
             }
@@ -355,57 +444,249 @@ class MainActivity : ComponentActivity() {
                     onOpenQq = { openQqGroup() }
                 )
             }
+        }
+    }
 
-            editing?.let { app ->
-                EditMinutesDialog(
-                    app = app,
-                    onDismiss = { editing = null },
-                    onSave = { newMinutes ->
-                        selected = selected.map {
-                            if (it.packageName == app.packageName) it.copy(minutes = newMinutes) else it
-                        }
-                        saveSelected(selected)
-                        editing = null
-                    }
+    // ---------------- 今日概览 ----------------
+
+    @Composable
+    private fun TodayCard(
+        usedMinutes: Int,
+        referenceMinutes: Int,
+        percent: Int,
+        snoozeCount: Int,
+        onEditReference: () -> Unit
+    ) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("今日娱乐", style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = onEditReference) { Text("参考时长") }
+                }
+
+                Spacer(Modifier.height(4.dp))
+
+                MiniProgress(
+                    fraction = if (referenceMinutes > 0) usedMinutes.toFloat() / referenceMinutes else 0f,
+                    color = StatsPalette.accent(percent)
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "$usedMinutes / $referenceMinutes 分钟",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "$percent%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = StatsPalette.text(percent)
+                    )
+                }
+
+                Spacer(Modifier.height(4.dp))
+
+                Text(
+                    "今天已延长 $snoozeCount 次",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
     }
 
+    // ---------------- 监控项 ----------------
+
     @Composable
-    private fun EditMinutesDialog(
+    private fun MonitoredRow(
         app: MonitoredApp,
-        onDismiss: () -> Unit,
-        onSave: (Int) -> Unit
+        onEdit: () -> Unit,
+        onDelete: () -> Unit
     ) {
-        var minutes by remember { mutableStateOf(app.minutes) }
+        Card(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier
+                    .padding(start = 12.dp, top = 8.dp, end = 8.dp, bottom = 8.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AppIcon(app.packageName, 40.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(app.label, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${app.category.label} · 每次 ${app.minutes} 分钟提醒",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(onClick = onEdit) { Text("编辑") }
+                TextButton(onClick = onDelete) { Text("删除") }
+            }
+        }
+    }
+
+    // ---------------- 弹窗 ----------------
+
+    @Composable
+    private fun AppConfigDialog(
+        target: ConfigTarget,
+        onDismiss: () -> Unit,
+        onSave: (Int, AppCategory) -> Unit
+    ) {
+        var minutes by remember { mutableStateOf(target.minutes) }
+        var category by remember { mutableStateOf(target.category) }
 
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text(app.label) },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AppIcon(target.packageName, 28.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(target.label, maxLines = 1)
+                }
+            },
             text = {
                 Column {
-                    Text("每次打开后提醒时间：$minutes 分钟")
+                    Text("每次打开后提醒：$minutes 分钟")
                     Slider(
                         value = minutes.toFloat(),
                         onValueChange = { minutes = it.toInt().coerceIn(1, 120) },
-                        valueRange = 1f..120f,
-                        steps = 118
+                        valueRange = 1f..120f
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "改完立刻生效：如果正在用这个 App，本轮会按新的时长重算。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+
+                    Spacer(Modifier.height(12.dp))
+                    Text("分类", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(6.dp))
+                    CategoryChips(selected = category, onSelect = { category = it })
+
+                    if (!target.isNew) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "改完立刻生效：如果正在用这个 App，本轮会按新的时长重算。",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onSave(minutes) }) { Text("保存") }
+                TextButton(onClick = { onSave(minutes, category) }) {
+                    Text(if (target.isNew) "添加" else "保存")
+                }
             },
             dismissButton = {
                 TextButton(onClick = onDismiss) { Text("取消") }
             }
         )
+    }
+
+    @Composable
+    private fun CategoryChips(selected: AppCategory, onSelect: (AppCategory) -> Unit) {
+        val rows = listOf(
+            listOf(AppCategory.SHORT_VIDEO, AppCategory.READING, AppCategory.SOCIAL),
+            listOf(AppCategory.GAME, AppCategory.OTHER)
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            rows.forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    row.forEach { item ->
+                        FilterChip(
+                            selected = item == selected,
+                            onClick = { onSelect(item) },
+                            label = { Text(item.label) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (row.size < 3) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun ReferenceDialog(
+        current: DailyReference,
+        onDismiss: () -> Unit,
+        onSave: (DailyReference) -> Unit
+    ) {
+        var separate by remember { mutableStateOf(current.separateWeekday) }
+        var daily by remember { mutableStateOf(current.dailyMinutes) }
+        var weekday by remember { mutableStateOf(current.weekdayMinutes) }
+        var weekend by remember { mutableStateOf(current.weekendMinutes) }
+
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("每日娱乐参考时长") },
+            text = {
+                Column {
+                    Text(
+                        "只是一个参照：用来算今天的娱乐时长占多少比例。" +
+                            "不会限制你，也不会有任何拦截或惩罚。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !separate,
+                            onClick = { separate = false },
+                            label = { Text("每天一样") }
+                        )
+                        FilterChip(
+                            selected = separate,
+                            onClick = { separate = true },
+                            label = { Text("工作日/休息日") }
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    if (!separate) {
+                        MinutesSlider("每天", daily) { daily = it }
+                    } else {
+                        MinutesSlider("工作日", weekday) { weekday = it }
+                        MinutesSlider("休息日", weekend) { weekend = it }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onSave(DailyReference(separate, daily, weekday, weekend))
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        )
+    }
+
+    @Composable
+    private fun MinutesSlider(label: String, minutes: Int, onChange: (Int) -> Unit) {
+        Column {
+            Text("$label：$minutes 分钟", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = minutes.toFloat(),
+                onValueChange = {
+                    onChange(
+                        it.toInt().coerceIn(
+                            DailyReference.MIN_MINUTES,
+                            DailyReference.MAX_MINUTES
+                        )
+                    )
+                },
+                valueRange = DailyReference.MIN_MINUTES.toFloat()..
+                    DailyReference.MAX_MINUTES.toFloat()
+            )
+        }
     }
 
     @Composable
@@ -461,11 +742,9 @@ class MainActivity : ComponentActivity() {
     private fun AppPicker(
         allApps: List<Pair<String, String>>,
         onDismiss: () -> Unit,
-        onAdd: (String, String, Int) -> Unit
+        onPick: (String, String) -> Unit
     ) {
-        var minutes by remember { mutableStateOf(15) }
         var query by remember { mutableStateOf("") }
-
         val installedCommon = remember { installedCommonApps() }
         val filtered = remember(allApps, query) {
             if (query.isBlank()) allApps
@@ -480,36 +759,6 @@ class MainActivity : ComponentActivity() {
             title = { Text("选择要监控的 App") },
             text = {
                 Column {
-                    Text("提醒时间：$minutes 分钟")
-                    Slider(
-                        value = minutes.toFloat(),
-                        onValueChange = { minutes = it.toInt().coerceIn(1, 120) },
-                        valueRange = 1f..120f,
-                        steps = 118
-                    )
-
-                    Spacer(Modifier.height(8.dp))
-
-                    if (installedCommon.isNotEmpty()) {
-                        Text("常用娱乐 App（点一下直接添加）", style = MaterialTheme.typography.titleSmall)
-                        LazyColumn(Modifier.heightIn(max = 140.dp)) {
-                            items(installedCommon) { (label, pkg) ->
-                                TextButton(
-                                    onClick = { onAdd(label, pkg, minutes) },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(label)
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(12.dp))
-                    }
-
-                    Text(
-                        "全部应用（${filtered.size}）",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Spacer(Modifier.height(4.dp))
                     OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
@@ -517,15 +766,26 @@ class MainActivity : ComponentActivity() {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(Modifier.height(4.dp))
+
+                    Spacer(Modifier.height(8.dp))
+
+                    if (installedCommon.isNotEmpty() && query.isBlank()) {
+                        Text("常用娱乐 App", style = MaterialTheme.typography.titleSmall)
+                        LazyColumn(Modifier.heightIn(max = 150.dp)) {
+                            items(installedCommon) { (label, pkg) ->
+                                AppPickRow(label = label, pkg = pkg, onPick = onPick)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    Text(
+                        "全部应用（${filtered.size}）",
+                        style = MaterialTheme.typography.titleSmall
+                    )
                     LazyColumn(Modifier.heightIn(max = 200.dp)) {
                         items(filtered) { (label, pkg) ->
-                            TextButton(
-                                onClick = { onAdd(label, pkg, minutes) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(label)
-                            }
+                            AppPickRow(label = label, pkg = pkg, onPick = onPick)
                         }
                     }
                 }
@@ -537,17 +797,41 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    @Composable
+    private fun AppPickRow(label: String, pkg: String, onPick: (String, String) -> Unit) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { onPick(label, pkg) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AppIcon(packageName = pkg, size = 32.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                Text(
+                    (COMMON_CATEGORY[pkg] ?: AppCategory.OTHER).label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+
+    // ---------------- 数据读取 ----------------
+
     /** 手机上真正装了的那部分常见娱乐 App */
     private fun installedCommonApps(): List<Pair<String, String>> {
-        return COMMON_APPS.mapNotNull { (name, pkg) ->
+        return COMMON_APPS.mapNotNull { item ->
             val info = try {
-                packageManager.getApplicationInfo(pkg, 0)
+                packageManager.getApplicationInfo(item.pkg, 0)
             } catch (e: PackageManager.NameNotFoundException) {
                 null
             } ?: return@mapNotNull null
 
-            val realLabel = info.loadLabel(packageManager).toString().ifBlank { name }
-            realLabel to pkg
+            val realLabel = info.loadLabel(packageManager).toString().ifBlank { item.label }
+            realLabel to item.pkg
         }
     }
 
@@ -560,24 +844,6 @@ class MainActivity : ComponentActivity() {
             .map { it.loadLabel(packageManager).toString() to it.packageName }
             .sortedWith { a, b -> collator.compare(a.first, b.first) }
             .toList()
-    }
-
-    private fun loadSelected(): List<MonitoredApp> {
-        val raw = prefs.getStringSet("monitored", emptySet()) ?: emptySet()
-        return raw.mapNotNull {
-            val p = it.split("|")
-            if (p.size != 3) null
-            else MonitoredApp(p[0], p[1], p[2].toIntOrNull() ?: 15)
-        }
-    }
-
-    private fun saveSelected(list: List<MonitoredApp>) {
-        prefs.edit()
-            .putStringSet(
-                "monitored",
-                list.map { "${it.label}|${it.packageName}|${it.minutes}" }.toSet()
-            )
-            .apply()
     }
 
     private fun createNotificationChannels() {

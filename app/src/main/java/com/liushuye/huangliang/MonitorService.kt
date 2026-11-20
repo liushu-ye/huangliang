@@ -18,8 +18,13 @@ import kotlinx.coroutines.*
 class MonitorService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val prefs by lazy { getSharedPreferences("settings", Context.MODE_PRIVATE) }
     private val overlay by lazy { ReminderOverlay(this) }
+
+    /** 上一次 tick 的时间戳，用来算这一轮该给当天加多少使用时长 */
+    private var lastTickAt = 0L
+
+    /** 还没落盘的时长增量，攒够 FLUSH_INTERVAL_MS 再写一次存储 */
+    private var pendingUsedMillis = 0L
 
     /** 当前判定为前台的目标包名；null 表示不在任何 App 里（桌面/息屏/别的 App） */
     private var currentPackage: String? = null
@@ -96,6 +101,11 @@ class MonitorService : Service() {
 
     private fun tick() {
         val now = System.currentTimeMillis()
+        // 和上一轮的间隔；超过 MAX_TICK_GAP_MS 说明进程被挂起过，这段不算使用时长
+        val delta = if (lastTickAt == 0L) 0L
+        else (now - lastTickAt).coerceIn(0L, MAX_TICK_GAP_MS)
+        lastTickAt = now
+
         val monitored = loadMonitored()
         updateOngoingNotification(monitored.size)
 
@@ -112,9 +122,14 @@ class MonitorService : Service() {
 
         val target = foreground?.let { pkg -> monitored.firstOrNull { it.packageName == pkg } }
         if (target == null) {
+            // 离开被监控的 App 了，把这段没落盘的时长立刻写掉
+            flushUsage()
             resetSession()
             return
         }
+
+        // 停在被监控的 App 上，这段时间才算娱乐时长
+        accumulateUsage(delta)
 
         // 刚进入目标 App，本次会话从这一刻开始重新计时
         if (sessionStart == 0L) {
@@ -149,6 +164,19 @@ class MonitorService : Service() {
         sessionMinutes = 0
         remindedThisSession = false
         snoozeUntil = 0L
+    }
+
+    /** 累计今天的使用时长，攒够一批再落盘，避免每秒写一次 SharedPreferences */
+    private fun accumulateUsage(deltaMillis: Long) {
+        if (deltaMillis <= 0L) return
+        pendingUsedMillis += deltaMillis
+        if (pendingUsedMillis >= FLUSH_INTERVAL_MS) flushUsage()
+    }
+
+    private fun flushUsage() {
+        if (pendingUsedMillis <= 0L) return
+        AppStore.addUsage(this, pendingUsedMillis)
+        pendingUsedMillis = 0L
     }
 
     /**
@@ -217,10 +245,11 @@ class MonitorService : Service() {
         )
     }
 
-    /** 「再玩 N 分钟」：把截止点往后推，并允许再次提醒 */
+    /** 「再玩 N 分钟」：把截止点往后推，允许再次提醒，并记一次延长 */
     private fun snooze(minutes: Int) {
         snoozeUntil = System.currentTimeMillis() + minutes * 60_000L
         remindedThisSession = false
+        AppStore.addSnooze(this)
     }
 
     /**
@@ -286,14 +315,7 @@ class MonitorService : Service() {
             .notify(NOTIFICATION_ID_ONGOING, notification)
     }
 
-    private fun loadMonitored(): List<MonitoredApp> {
-        val raw = prefs.getStringSet("monitored", emptySet()) ?: emptySet()
-        return raw.mapNotNull {
-            val p = it.split("|")
-            if (p.size != 3) null
-            else MonitoredApp(p[0], p[1], p[2].toIntOrNull() ?: 15)
-        }
-    }
+    private fun loadMonitored(): List<MonitoredApp> = AppStore.loadMonitored(this)
 
     private fun createChannel() {
         val manager = getSystemService(NotificationManager::class.java)
@@ -309,6 +331,7 @@ class MonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
+        flushUsage()
         overlay.dismiss()
         scope.cancel()
         super.onDestroy()
@@ -322,6 +345,12 @@ class MonitorService : Service() {
         private const val NOTIFICATION_ID_ONGOING = 1001
         private const val NOTIFICATION_ID_REMINDER = 1002
         private const val POLL_INTERVAL_MS = 1000L
+
+        /** 两轮之间超过这么久，说明进程被挂起过，这段不计入使用时长 */
+        private const val MAX_TICK_GAP_MS = 5_000L
+
+        /** 使用时长攒够这么久落一次盘 */
+        private const val FLUSH_INTERVAL_MS = 15_000L
 
         /** 首次查询的回看窗口：服务可能是用户已经打开目标 App 之后才启动的 */
         private const val FIRST_LOOKBACK_MS = 10 * 60_000L
