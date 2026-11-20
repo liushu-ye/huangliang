@@ -26,6 +26,25 @@ data class MonitoredApp(
 )
 
 /**
+ * 某一天、某个 App 的使用情况。
+ *
+ * label 也存一份：以后用户把这个 App 从监控里删了，历史记录还得能显示名字。
+ */
+data class AppUsage(
+    val packageName: String,
+    val label: String,
+    val usedMillis: Long,
+    val snoozeCount: Int
+) {
+    val usedMinutes: Int get() = (usedMillis / 60_000L).toInt()
+}
+
+/** 毫秒换算成占参考时长的百分比 */
+fun percentOf(millis: Long, referenceMinutes: Int): Int =
+    if (referenceMinutes <= 0) 0
+    else ((millis.toDouble() / (referenceMinutes * 60_000L)) * 100).toInt()
+
+/**
  * 某一天的统计记录。
  *
  * 注意 [referenceMinutes] 只是「占比的分母」——用来告诉你今天娱乐时间占参考时长的多少，
@@ -33,23 +52,26 @@ data class MonitoredApp(
  */
 data class DailyRecord(
     val date: LocalDate,
-    /** 当天被监控 App 的累计使用时长 */
-    val usedMillis: Long,
     /** 当天设置的娱乐参考时长（分钟），存快照是因为这个值以后可能会调整 */
     val referenceMinutes: Int,
-    /** 当天用了多少次「再玩 5 分钟」 */
-    val snoozeCount: Int
+    /** 按包名索引的当天各 App 使用情况 */
+    val apps: Map<String, AppUsage>
 ) {
+    val usedMillis: Long get() = apps.values.sumOf { it.usedMillis }
     val usedMinutes: Int get() = (usedMillis / 60_000L).toInt()
+    val snoozeCount: Int get() = apps.values.sumOf { it.snoozeCount }
 
-    /** 已用时长占参考时长的百分比，纯参考 */
-    val usedPercent: Int
-        get() = if (referenceMinutes <= 0) 0
-        else ((usedMillis.toDouble() / (referenceMinutes * 60_000L)) * 100).toInt()
+    /** 当天总时长占参考时长的百分比，纯参考 */
+    val usedPercent: Int get() = percentOf(usedMillis, referenceMinutes)
+
+    fun percentOf(app: AppUsage): Int = percentOf(app.usedMillis, referenceMinutes)
+
+    /** 按使用时长从多到少排，日历里就按这个顺序列 */
+    fun appsByUsage(): List<AppUsage> = apps.values.sortedByDescending { it.usedMillis }
 
     companion object {
         fun empty(date: LocalDate, referenceMinutes: Int) =
-            DailyRecord(date, 0L, referenceMinutes, 0)
+            DailyRecord(date, referenceMinutes, emptyMap())
     }
 }
 
@@ -79,6 +101,10 @@ data class DailyReference(
 /** 星期几的中文单字，周一开头 */
 val WEEKDAY_CHARS = arrayOf("一", "二", "三", "四", "五", "六", "日")
 
+fun LocalDate.weekdayChar(): String = WEEKDAY_CHARS[dayOfWeek.value - 1]
+
+fun LocalDate.chineseDate(): String = "${monthValue}月${dayOfMonth}日 周${weekdayChar()}"
+
 /**
  * 把一个月排成 7 列的行（周一开头），本月之外的位置是 null。
  * 抽成纯函数是为了能单测 —— 日历错位是最容易出又最难一眼看出的 bug。
@@ -94,7 +120,3 @@ fun monthGrid(month: YearMonth): List<List<LocalDate?>> {
         }
     }
 }
-
-fun LocalDate.weekdayChar(): String = WEEKDAY_CHARS[dayOfWeek.value - 1]
-
-fun LocalDate.chineseDate(): String = "${monthValue}月${dayOfMonth}日 周${weekdayChar()}"

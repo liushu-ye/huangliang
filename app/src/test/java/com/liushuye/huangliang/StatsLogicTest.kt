@@ -89,13 +89,43 @@ class StatsLogicTest {
     fun `占比按毫秒换算并向下取整`() {
         val date = LocalDate.of(2026, 11, 20)
         // 45 分钟 / 120 分钟 = 37.5% -> 37
-        assertEquals(37, DailyRecord(date, 45 * 60_000L, 120, 0).usedPercent)
+        assertEquals(37, record(date, 120, usage("a", "A", 45)).usedPercent)
         // 正好用满
-        assertEquals(100, DailyRecord(date, 120 * 60_000L, 120, 0).usedPercent)
+        assertEquals(100, record(date, 120, usage("a", "A", 120)).usedPercent)
         // 超出一倍
-        assertEquals(250, DailyRecord(date, 300 * 60_000L, 120, 0).usedPercent)
+        assertEquals(250, record(date, 120, usage("a", "A", 300)).usedPercent)
         // 参考时长为 0 时不做除法
-        assertEquals(0, DailyRecord(date, 10_000L, 0, 0).usedPercent)
+        assertEquals(0, record(date, 0, usage("a", "A", 10)).usedPercent)
+    }
+
+    @Test
+    fun `多个 App 的时长与延长次数会汇总`() {
+        val date = LocalDate.of(2026, 11, 20)
+        val rec = record(
+            date,
+            100,
+            usage("com.a", "抖音", 40, snooze = 2),
+            usage("com.b", "B站", 10, snooze = 1)
+        )
+
+        assertEquals(50, rec.usedMinutes)
+        assertEquals(3, rec.snoozeCount)
+        assertEquals(50, rec.usedPercent)
+        // 按使用时长从多到少
+        assertEquals(listOf("抖音", "B站"), rec.appsByUsage().map { it.label })
+    }
+
+    @Test
+    fun `单个 App 的占比用同一个参考时长做分母`() {
+        val date = LocalDate.of(2026, 11, 20)
+        val douyin = usage("com.a", "抖音", 40, snooze = 2)
+        val bili = usage("com.b", "B站", 10, snooze = 0)
+        val rec = record(date, 100, douyin, bili)
+
+        assertEquals(40, rec.percentOf(douyin))
+        assertEquals(10, rec.percentOf(bili))
+        // 各 App 占比之和应当等于总占比
+        assertEquals(rec.usedPercent, rec.percentOf(douyin) + rec.percentOf(bili))
     }
 
     @Test
@@ -104,4 +134,10 @@ class StatsLogicTest {
         assertEquals(AppCategory.OTHER, AppCategory.fromName("SOMETHING_NEW"))
         assertEquals(AppCategory.OTHER, AppCategory.fromName(null))
     }
+
+    private fun usage(pkg: String, label: String, minutes: Int, snooze: Int = 0) =
+        AppUsage(pkg, label, minutes * 60_000L, snooze)
+
+    private fun record(date: LocalDate, reference: Int, vararg apps: AppUsage) =
+        DailyRecord(date, reference, apps.associateBy { it.packageName })
 }

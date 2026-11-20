@@ -7,8 +7,15 @@ import java.time.LocalDate
 /**
  * 本地存储。全部放在同一个 SharedPreferences 文件里，后台服务和界面共用。
  *
- * 每日记录存成一段 JSON：{"2026-11-20":{"usedMs":123456,"ref":120,"snooze":2}, ...}
- * 只保留最近 [MAX_DAILY_ENTRIES] 天，日期键是 yyyy-MM-dd，字典序即时间序。
+ * 每日记录存成一段 JSON，按天再按 App 分开：
+ * ```
+ * {"2026-11-20":{"ref":120,
+ *   "apps":{"com.ss.android.ugc.aweme":{"label":"抖音","usedMs":600000,"snooze":2}}}}
+ * ```
+ * 日期键是 yyyy-MM-dd，字典序即时间序，只保留最近 [MAX_DAILY_ENTRIES] 天。
+ *
+ * 老版本只存了当天总数（usedMs/snooze 在顶层），读取时会迁移成一条
+ * packageName = [LEGACY_KEY] 的记录，不丢历史。
  */
 object AppStore {
 
@@ -18,6 +25,9 @@ object AppStore {
 
     /** 大约两年，够日历翻了 */
     private const val MAX_DAILY_ENTRIES = 800
+
+    /** 老数据的兜底 key，不会与任何真实包名冲突 */
+    private const val LEGACY_KEY = "__legacy__"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -35,7 +45,7 @@ object AppStore {
             .apply()
     }
 
-    /** 格式 label|package|minutes|CATEGORY；老数据只有前三段，按「其他」处理 */
+    /** 格式 label|package|minutes|CATEGORY；更老的数据只有前三段，按「其他」处理 */
     private fun formatMonitored(app: MonitoredApp): String =
         listOf(app.label, app.packageName, app.minutes.toString(), app.category.name)
             .joinToString("|")
@@ -76,25 +86,24 @@ object AppStore {
 
     fun loadDailyRecords(context: Context): Map<LocalDate, DailyRecord> {
         val raw = prefs(context).getString(KEY_DAILY, null) ?: return emptyMap()
-        val obj = try {
+        val root = try {
             JSONObject(raw)
         } catch (e: Exception) {
             return emptyMap()
         }
 
         val result = LinkedHashMap<LocalDate, DailyRecord>()
-        for (key in obj.keys()) {
+        for (key in root.keys()) {
             val date = try {
                 LocalDate.parse(key)
             } catch (e: Exception) {
                 continue
             }
-            val item = obj.optJSONObject(key) ?: continue
+            val day = root.optJSONObject(key) ?: continue
             result[date] = DailyRecord(
                 date = date,
-                usedMillis = item.optLong("usedMs", 0L),
-                referenceMinutes = item.optInt("ref", 0),
-                snoozeCount = item.optInt("snooze", 0)
+                referenceMinutes = day.optInt("ref", 0),
+                apps = readApps(day)
             )
         }
         return result
@@ -103,20 +112,57 @@ object AppStore {
     fun recordFor(context: Context, date: LocalDate): DailyRecord? =
         loadDailyRecords(context)[date]
 
-    /** 累加今天的使用时长（毫秒），顺带把今天的参考时长刷新成当前设置 */
-    fun addUsage(context: Context, millis: Long) {
+    private fun readApps(day: JSONObject): Map<String, AppUsage> {
+        val appsObj = day.optJSONObject("apps")
+        if (appsObj != null) {
+            val map = LinkedHashMap<String, AppUsage>()
+            for (pkg in appsObj.keys()) {
+                val item = appsObj.optJSONObject(pkg) ?: continue
+                map[pkg] = AppUsage(
+                    packageName = pkg,
+                    label = item.optString("label").ifBlank { pkg },
+                    usedMillis = item.optLong("usedMs", 0L),
+                    snoozeCount = item.optInt("snooze", 0)
+                )
+            }
+            return map
+        }
+
+        // 老格式：只有当天总数，没有分应用
+        val used = day.optLong("usedMs", 0L)
+        val snooze = day.optInt("snooze", 0)
+        if (used <= 0L && snooze <= 0) return emptyMap()
+        return mapOf(
+            LEGACY_KEY to AppUsage(LEGACY_KEY, "未区分应用", used, snooze)
+        )
+    }
+
+    /** 累加今天某个 App 的使用时长（毫秒），顺带把参考时长快照刷新成当前设置 */
+    fun addAppUsage(context: Context, packageName: String, label: String, millis: Long) {
         if (millis <= 0) return
-        mutateToday(context) { obj, ref ->
-            obj.put("usedMs", obj.optLong("usedMs", 0L) + millis)
-            obj.put("ref", ref)
+        mutateToday(context) { day, reference ->
+            day.put("ref", reference)
+            val apps = ensureApps(day)
+            val entry = apps.optJSONObject(packageName) ?: JSONObject()
+            entry.put("label", label)
+            entry.put("usedMs", entry.optLong("usedMs", 0L) + millis)
+            if (!entry.has("snooze")) entry.put("snooze", 0)
+            apps.put(packageName, entry)
+            day.put("apps", apps)
         }
     }
 
-    /** 今天「再玩 N 分钟」用了一次 */
-    fun addSnooze(context: Context) {
-        mutateToday(context) { obj, ref ->
-            obj.put("snooze", obj.optInt("snooze", 0) + 1)
-            if (!obj.has("ref")) obj.put("ref", ref)
+    /** 今天这个 App 又用了一次「再玩 N 分钟」 */
+    fun addAppSnooze(context: Context, packageName: String, label: String) {
+        mutateToday(context) { day, reference ->
+            if (!day.has("ref")) day.put("ref", reference)
+            val apps = ensureApps(day)
+            val entry = apps.optJSONObject(packageName) ?: JSONObject()
+            entry.put("label", label)
+            if (!entry.has("usedMs")) entry.put("usedMs", 0L)
+            entry.put("snooze", entry.optInt("snooze", 0) + 1)
+            apps.put(packageName, entry)
+            day.put("apps", apps)
         }
     }
 
@@ -128,7 +174,30 @@ object AppStore {
         val today = LocalDate.now().toString()
         val root = readRoot(context)
         if (!root.has(today)) return
-        mutateToday(context) { obj, ref -> obj.put("ref", ref) }
+        mutateToday(context) { day, reference -> day.put("ref", reference) }
+    }
+
+    /** 取当天的 apps 对象；如果还是老格式，就地迁移成新格式 */
+    private fun ensureApps(day: JSONObject): JSONObject {
+        day.optJSONObject("apps")?.let { return it }
+
+        val apps = JSONObject()
+        val used = day.optLong("usedMs", 0L)
+        val snooze = day.optInt("snooze", 0)
+        if (used > 0L || snooze > 0) {
+            apps.put(
+                LEGACY_KEY,
+                JSONObject().apply {
+                    put("label", "未区分应用")
+                    put("usedMs", used)
+                    put("snooze", snooze)
+                }
+            )
+        }
+        day.remove("usedMs")
+        day.remove("snooze")
+        day.put("apps", apps)
+        return apps
     }
 
     private fun readRoot(context: Context): JSONObject = try {
@@ -149,22 +218,16 @@ object AppStore {
         val today = LocalDate.now()
         val reference = loadReference(context).minutesFor(today)
         val p = prefs(context)
-
-        val root = try {
-            p.getString(KEY_DAILY, null)?.let { JSONObject(it) } ?: JSONObject()
-        } catch (e: Exception) {
-            JSONObject()
-        }
+        val root = readRoot(context)
 
         val key = today.toString()
-        val entry = root.optJSONObject(key) ?: JSONObject().apply {
-            put("usedMs", 0L)
+        val day = root.optJSONObject(key) ?: JSONObject().apply {
             put("ref", reference)
-            put("snooze", 0)
+            put("apps", JSONObject())
         }
 
-        block(entry, reference)
-        root.put(key, entry)
+        block(day, reference)
+        root.put(key, day)
 
         trim(root)
         p.edit().putString(KEY_DAILY, root.toString()).apply()

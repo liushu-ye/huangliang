@@ -23,6 +23,10 @@ class MonitorService : Service() {
     /** 上一次 tick 的时间戳，用来算这一轮该给当天加多少使用时长 */
     private var lastTickAt = 0L
 
+    /** 正在累计的 App；换 App 时先把上一段落盘 */
+    private var pendingPackage: String? = null
+    private var pendingLabel: String = ""
+
     /** 还没落盘的时长增量，攒够 FLUSH_INTERVAL_MS 再写一次存储 */
     private var pendingUsedMillis = 0L
 
@@ -129,7 +133,7 @@ class MonitorService : Service() {
         }
 
         // 停在被监控的 App 上，这段时间才算娱乐时长
-        accumulateUsage(delta)
+        accumulateUsage(target.packageName, target.label, delta)
 
         // 刚进入目标 App，本次会话从这一刻开始重新计时
         if (sessionStart == 0L) {
@@ -166,16 +170,25 @@ class MonitorService : Service() {
         snoozeUntil = 0L
     }
 
-    /** 累计今天的使用时长，攒够一批再落盘，避免每秒写一次 SharedPreferences */
-    private fun accumulateUsage(deltaMillis: Long) {
+    /**
+     * 累计今天的使用时长。按 App 分开记：换 App 时先把上一段落盘，
+     * 攒够 FLUSH_INTERVAL_MS 也落一次，避免每秒写 SharedPreferences。
+     */
+    private fun accumulateUsage(packageName: String, label: String, deltaMillis: Long) {
         if (deltaMillis <= 0L) return
+        if (packageName != pendingPackage) {
+            flushUsage()
+            pendingPackage = packageName
+            pendingLabel = label
+        }
         pendingUsedMillis += deltaMillis
         if (pendingUsedMillis >= FLUSH_INTERVAL_MS) flushUsage()
     }
 
     private fun flushUsage() {
         if (pendingUsedMillis <= 0L) return
-        AppStore.addUsage(this, pendingUsedMillis)
+        val pkg = pendingPackage ?: return
+        AppStore.addAppUsage(this, pkg, pendingLabel, pendingUsedMillis)
         pendingUsedMillis = 0L
     }
 
@@ -197,7 +210,7 @@ class MonitorService : Service() {
                 label = pending.label,
                 onSnooze = { minutes ->
                     clearPendingExit()
-                    snooze(minutes)
+                    snooze(minutes, pending.packageName, pending.label)
                 },
                 onLeave = { requestExit(pending) }
             )
@@ -240,16 +253,16 @@ class MonitorService : Service() {
         overlay.showReminder(
             label = target.label,
             minutes = target.minutes,
-            onSnooze = { minutes -> snooze(minutes) },
+            onSnooze = { minutes -> snooze(minutes, target.packageName, target.label) },
             onLeave = { requestExit(target) }
         )
     }
 
-    /** 「再玩 N 分钟」：把截止点往后推，允许再次提醒，并记一次延长 */
-    private fun snooze(minutes: Int) {
+    /** 「再玩 N 分钟」：把截止点往后推，允许再次提醒，并给这个 App 记一次延长 */
+    private fun snooze(minutes: Int, packageName: String, label: String) {
         snoozeUntil = System.currentTimeMillis() + minutes * 60_000L
         remindedThisSession = false
-        AppStore.addSnooze(this)
+        AppStore.addAppSnooze(this, packageName, label)
     }
 
     /**

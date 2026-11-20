@@ -15,8 +15,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
@@ -229,6 +232,36 @@ private fun DayDetail(record: DailyRecord?, date: LocalDate) {
                     "延长使用 ${record.snoozeCount} 次",
                     style = MaterialTheme.typography.bodyMedium
                 )
+
+                val apps = record.appsByUsage()
+                if (apps.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text("按 App", style = MaterialTheme.typography.titleSmall)
+                    apps.forEach { usage ->
+                        val appPercent = record.percentOf(usage)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AppIcon(packageName = usage.packageName, size = 28.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(usage.label, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    buildAnnotatedString {
+                                        append("${usage.usedMinutes} 分钟 · 占参考 ")
+                                        withStyle(SpanStyle(color = StatsPalette.text(appPercent))) {
+                                            append("$appPercent%")
+                                        }
+                                        append(" · 延长 ${usage.snoozeCount} 次")
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

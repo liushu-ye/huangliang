@@ -19,15 +19,20 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.text.Collator
@@ -361,8 +366,12 @@ class MainActivity : ComponentActivity() {
                     item { Text("还没有监控任何 App") }
                 } else {
                     items(monitored, key = { it.packageName }) { app ->
+                        val usage = todayRecord?.apps?.get(app.packageName)
                         MonitoredRow(
                             app = app,
+                            usedMinutes = usage?.usedMinutes ?: 0,
+                            percent = usage?.let { percentOf(it.usedMillis, referenceMinutes) } ?: 0,
+                            snoozeCount = usage?.snoozeCount ?: 0,
                             onEdit = {
                                 configuring = ConfigTarget(
                                     label = app.label,
@@ -385,13 +394,13 @@ class MainActivity : ComponentActivity() {
                 AppPicker(
                     allApps = allApps,
                     onDismiss = { showPicker = false },
-                    onPick = { label, pkg ->
+                    onPick = { label, pkg, category ->
                         showPicker = false
                         configuring = ConfigTarget(
                             label = label,
                             packageName = pkg,
                             minutes = 15,
-                            category = COMMON_CATEGORY[pkg] ?: AppCategory.OTHER,
+                            category = category,
                             isNew = true
                         )
                     }
@@ -508,28 +517,47 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun MonitoredRow(
         app: MonitoredApp,
+        usedMinutes: Int,
+        percent: Int,
+        snoozeCount: Int,
         onEdit: () -> Unit,
         onDelete: () -> Unit
     ) {
         Card(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier
-                    .padding(start = 12.dp, top = 8.dp, end = 8.dp, bottom = 8.dp)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                AppIcon(app.packageName, 40.dp)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(app.label, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "${app.category.label} · 每次 ${app.minutes} 分钟提醒",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            Column(Modifier.padding(top = 8.dp, bottom = 10.dp)) {
+                Row(
+                    Modifier
+                        .padding(start = 12.dp, end = 8.dp)
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AppIcon(app.packageName, 40.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(app.label, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "${app.category.label} · 每次 ${app.minutes} 分钟提醒",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = onEdit) { Text("编辑") }
+                    TextButton(onClick = onDelete) { Text("删除") }
                 }
-                TextButton(onClick = onEdit) { Text("编辑") }
-                TextButton(onClick = onDelete) { Text("删除") }
+
+                Spacer(Modifier.height(2.dp))
+
+                Text(
+                    buildAnnotatedString {
+                        append("今日 $usedMinutes 分钟 · 占参考 ")
+                        withStyle(SpanStyle(color = StatsPalette.text(percent))) {
+                            append("$percent%")
+                        }
+                        append(" · 延长 $snoozeCount 次")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 64.dp, end = 16.dp)
+                )
             }
         }
     }
@@ -742,23 +770,52 @@ class MainActivity : ComponentActivity() {
     private fun AppPicker(
         allApps: List<Pair<String, String>>,
         onDismiss: () -> Unit,
-        onPick: (String, String) -> Unit
+        onPick: (String, String, AppCategory) -> Unit
     ) {
         var query by remember { mutableStateOf("") }
+        var active by remember { mutableStateOf<AppCategory?>(null) }
         val installedCommon = remember { installedCommonApps() }
-        val filtered = remember(allApps, query) {
-            if (query.isBlank()) allApps
-            else allApps.filter {
-                it.first.contains(query, ignoreCase = true) ||
-                    it.second.contains(query, ignoreCase = true)
+
+        val filtered = remember(allApps, query, active) {
+            allApps.filter { (label, pkg) ->
+                val matchQuery = query.isBlank() ||
+                    label.contains(query, ignoreCase = true) ||
+                    pkg.contains(query, ignoreCase = true)
+                val category = COMMON_CATEGORY[pkg] ?: AppCategory.OTHER
+                matchQuery && (active == null || category == active)
             }
         }
+        val sectionTitle = active?.let { "${it.label}（${filtered.size}）" }
+            ?: "全部应用（${filtered.size}）"
 
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("选择要监控的 App") },
             text = {
                 Column {
+                    // 按分类筛选：先从菜单选一个类，再在里面挑 App
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = active == null,
+                            onClick = { active = null },
+                            label = { Text("全部") }
+                        )
+                        AppCategory.entries.forEach { category ->
+                            FilterChip(
+                                selected = active == category,
+                                onClick = { active = category },
+                                label = { Text(category.label) }
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
                     OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
@@ -769,24 +826,39 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(Modifier.height(8.dp))
 
-                    if (installedCommon.isNotEmpty() && query.isBlank()) {
+                    if (installedCommon.isNotEmpty() && query.isBlank() && active == null) {
                         Text("常用娱乐 App", style = MaterialTheme.typography.titleSmall)
-                        LazyColumn(Modifier.heightIn(max = 150.dp)) {
+                        LazyColumn(Modifier.heightIn(max = 130.dp)) {
                             items(installedCommon) { (label, pkg) ->
-                                AppPickRow(label = label, pkg = pkg, onPick = onPick)
+                                AppPickRow(label = label, pkg = pkg) {
+                                    onPick(label, pkg, COMMON_CATEGORY[pkg] ?: AppCategory.OTHER)
+                                }
                             }
                         }
                         Spacer(Modifier.height(8.dp))
                     }
 
-                    Text(
-                        "全部应用（${filtered.size}）",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    LazyColumn(Modifier.heightIn(max = 200.dp)) {
+                    Text(sectionTitle, style = MaterialTheme.typography.titleSmall)
+                    LazyColumn(Modifier.heightIn(max = 210.dp)) {
                         items(filtered) { (label, pkg) ->
-                            AppPickRow(label = label, pkg = pkg, onPick = onPick)
+                            AppPickRow(label = label, pkg = pkg) {
+                                // 在某个分类下挑的，就用那个分类；已知的仍以已知分类为准
+                                onPick(
+                                    label,
+                                    pkg,
+                                    COMMON_CATEGORY[pkg] ?: active ?: AppCategory.OTHER
+                                )
+                            }
                         }
+                    }
+
+                    if (filtered.isEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "没有匹配的应用。不常见的 App 都归在「其他」里，也可以切到「全部」直接搜。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             },
@@ -798,11 +870,11 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun AppPickRow(label: String, pkg: String, onPick: (String, String) -> Unit) {
+    private fun AppPickRow(label: String, pkg: String, onClick: () -> Unit) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable { onPick(label, pkg) }
+                .clickable(onClick = onClick)
                 .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
